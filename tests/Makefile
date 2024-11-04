@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: MIT
-
 export CPPUTEST_HOME = cpputest
 export TEST_BUILDIR ?= build
 
