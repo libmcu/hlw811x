@@ -8,6 +8,7 @@
 #include "hlw811x_overrides.h"
 
 #include <string.h>
+#include <stdlib.h>
 
 #if !defined(HLW811X_MCLK)
 #define HLW811X_MCLK		(3579545UL) /* Hz (= 3.579545MHz) */
@@ -54,13 +55,12 @@ struct calc_param {
 
 struct hlw811x {
 	hlw811x_interface_t iface;
+	void *ctx;
 
 	struct hlw811x_resistor_ratio ratio;
 	struct hlw811x_coeff coeff;
 	struct hlw811x_pga pga;
 };
-
-static struct hlw811x m;
 
 static int16_t convert_16bits_to_int16(const uint8_t buf[2])
 {
@@ -199,12 +199,13 @@ static hlw811x_error_t decode_uart(uint8_t *buf, size_t bufsize,
 	return HLW811X_ERROR_NONE;
 }
 
-static hlw811x_error_t encode(uint8_t *buf, size_t bufsize,
+static hlw811x_error_t encode(hlw811x_interface_t iface,
+		uint8_t *buf, size_t bufsize,
 		const uint8_t *data, size_t datalen, size_t *len)
 {
 	encoder_t encoder = encode_uart;
 
-	if (m.iface == HLW811X_UART) {
+	if (iface == HLW811X_UART) {
 	} else {
 		HLW811X_ERROR("Not implemented");
 		return HLW811X_NOT_IMPLEMENTED;
@@ -215,13 +216,14 @@ static hlw811x_error_t encode(uint8_t *buf, size_t bufsize,
 	return HLW811X_ERROR_NONE;
 }
 
-static hlw811x_error_t decode(uint8_t *buf, size_t bufsize,
+static hlw811x_error_t decode(hlw811x_interface_t iface,
+		uint8_t *buf, size_t bufsize,
 		const uint8_t *tx, size_t tx_len,
 		const uint8_t *rx, size_t rx_len, size_t *len)
 {
 	decoder_t decoder = decode_uart;
 
-	if (m.iface == HLW811X_UART) {
+	if (iface == HLW811X_UART) {
 	} else {
 		HLW811X_ERROR("Not implemented");
 		return HLW811X_NOT_IMPLEMENTED;
@@ -230,7 +232,8 @@ static hlw811x_error_t decode(uint8_t *buf, size_t bufsize,
 	return (*decoder)(buf, bufsize, tx, tx_len, rx, rx_len, len);
 }
 
-static hlw811x_error_t encode_frame(hlw811x_reg_addr_t addr,
+static hlw811x_error_t encode_frame(hlw811x_interface_t iface,
+		hlw811x_reg_addr_t addr,
 		uint8_t *txbuf, size_t txbuf_len,
 		const uint8_t *data, size_t datalen,
 		size_t *frame_len)
@@ -247,17 +250,18 @@ static hlw811x_error_t encode_frame(hlw811x_reg_addr_t addr,
 		payload[i + 1] = data[i];
 	}
 
-	return encode(txbuf, txbuf_len, payload, datalen+1, frame_len);
+	return encode(iface, txbuf, txbuf_len, payload, datalen+1, frame_len);
 }
 
-static hlw811x_error_t decode_frame(uint8_t *buf, size_t bufsize,
+static hlw811x_error_t decode_frame(hlw811x_interface_t iface,
+		uint8_t *buf, size_t bufsize,
 		const uint8_t *tx, size_t tx_len,
 		const uint8_t *rx, size_t rx_len)
 {
 	size_t len;
 	hlw811x_error_t err;
 
-	if ((err = decode(buf, bufsize, tx, tx_len, rx, rx_len, &len))
+	if ((err = decode(iface, buf, bufsize, tx, tx_len, rx, rx_len, &len))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	} else if (len != bufsize) {
@@ -268,31 +272,31 @@ static hlw811x_error_t decode_frame(uint8_t *buf, size_t bufsize,
 	return HLW811X_ERROR_NONE;
 }
 
-static void get_calc_param_rms(hlw811x_channel_t channel,
-		struct calc_param *param)
+static void get_calc_param_rms(struct hlw811x *self,
+		hlw811x_channel_t channel, struct calc_param *param)
 {
 	if (channel == HLW811X_CHANNEL_A) {
 		*param = (struct calc_param) {
 			.addr = HLW811X_REG_RMS_IA,
-			.coeff = m.coeff.rms.A,
-			.ratio = convert_float_to_uint16_centi(m.ratio.K1_A),
-			.pga = m.pga.A,
+			.coeff = self->coeff.rms.A,
+			.ratio = convert_float_to_uint16_centi(self->ratio.K1_A),
+			.pga = self->pga.A,
 			.resol = 1ll << 23,
 		};
 	} else if (channel == HLW811X_CHANNEL_B) {
 		*param = (struct calc_param) {
 			.addr = HLW811X_REG_RMS_IB,
-			.coeff = m.coeff.rms.B,
-			.ratio = convert_float_to_uint16_centi(m.ratio.K1_B),
-			.pga = m.pga.B,
+			.coeff = self->coeff.rms.B,
+			.ratio = convert_float_to_uint16_centi(self->ratio.K1_B),
+			.pga = self->pga.B,
 			.resol = 1ll << 23,
 		};
 	} else if (channel == HLW811X_CHANNEL_U) {
 		*param = (struct calc_param) {
 			.addr = HLW811X_REG_RMS_U,
-			.coeff = m.coeff.rms.U,
-			.ratio = convert_float_to_uint16_centi(m.ratio.K2),
-			.pga = m.pga.U,
+			.coeff = self->coeff.rms.U,
+			.ratio = convert_float_to_uint16_centi(self->ratio.K2),
+			.pga = self->pga.U,
 			.resol = 1ll << 22,
 			.mult = 10,
 		};
@@ -301,29 +305,29 @@ static void get_calc_param_rms(hlw811x_channel_t channel,
 	}
 }
 
-static void get_calc_param_power(hlw811x_channel_t channel,
-		struct calc_param *param)
+static void get_calc_param_power(struct hlw811x *self,
+		hlw811x_channel_t channel, struct calc_param *param)
 {
 	if (channel == HLW811X_CHANNEL_A) {
 		*param = (struct calc_param) {
 			.addr = HLW811X_REG_POWER_PA,
-			.coeff = m.coeff.power.A,
-			.ratio = convert_float_to_uint16_centi(m.ratio.K1_A),
-			.pga = m.pga.A,
+			.coeff = self->coeff.power.A,
+			.ratio = convert_float_to_uint16_centi(self->ratio.K1_A),
+			.pga = self->pga.A,
 		};
 	} else if (channel == HLW811X_CHANNEL_B) {
 		*param = (struct calc_param) {
 			.addr = HLW811X_REG_POWER_PB,
-			.coeff = m.coeff.power.B,
-			.ratio = convert_float_to_uint16_centi(m.ratio.K1_B),
-			.pga = m.pga.B,
+			.coeff = self->coeff.power.B,
+			.ratio = convert_float_to_uint16_centi(self->ratio.K1_B),
+			.pga = self->pga.B,
 		};
 	} else if (channel == HLW811X_CHANNEL_U) {
 		*param = (struct calc_param) {
 			.addr = HLW811X_REG_POWER_S,
-			.coeff = m.coeff.power.S,
-			.ratio = convert_float_to_uint16_centi(m.ratio.K2),
-			.pga = m.pga.U,
+			.coeff = self->coeff.power.S,
+			.ratio = convert_float_to_uint16_centi(self->ratio.K2),
+			.pga = self->pga.U,
 		};
 	} else {
 		HLW811X_ERROR("Invalid channel: %d", channel);
@@ -332,22 +336,22 @@ static void get_calc_param_power(hlw811x_channel_t channel,
 	param->resol = 1ll << 31;
 }
 
-static void get_calc_param_energy(hlw811x_channel_t channel,
-		struct calc_param *param)
+static void get_calc_param_energy(struct hlw811x *self,
+		hlw811x_channel_t channel, struct calc_param *param)
 {
 	if (channel == HLW811X_CHANNEL_A) {
 		*param = (struct calc_param) {
 			.addr = HLW811X_REG_ENERGY_PA,
-			.coeff = m.coeff.energy.A,
-			.ratio = convert_float_to_uint16_centi(m.ratio.K1_A),
-			.pga = m.pga.A,
+			.coeff = self->coeff.energy.A,
+			.ratio = convert_float_to_uint16_centi(self->ratio.K1_A),
+			.pga = self->pga.A,
 		};
 	} else if (channel == HLW811X_CHANNEL_B) {
 		*param = (struct calc_param) {
 			.addr = HLW811X_REG_ENERGY_PB,
-			.coeff = m.coeff.energy.B,
-			.ratio = convert_float_to_uint16_centi(m.ratio.K1_B),
-			.pga = m.pga.B,
+			.coeff = self->coeff.energy.B,
+			.ratio = convert_float_to_uint16_centi(self->ratio.K1_B),
+			.pga = self->pga.B,
 		};
 	} else {
 		HLW811X_ERROR("Invalid channel: %d", channel);
@@ -356,27 +360,27 @@ static void get_calc_param_energy(hlw811x_channel_t channel,
 	param->resol = 1ll << 29;
 }
 
-static void get_calc_param(hlw811x_channel_t channel,
+static void get_calc_param(struct hlw811x *self, hlw811x_channel_t channel,
 		calc_type_t type, struct calc_param *param)
 {
 	memset(param, 0, sizeof(*param));
 
 	if (type == CALC_TYPE_RMS) {
-		get_calc_param_rms(channel, param);
+		get_calc_param_rms(self, channel, param);
 	} else if (type == CALC_TYPE_POWER) {
-		get_calc_param_power(channel, param);
+		get_calc_param_power(self, channel, param);
 	} else if (type == CALC_TYPE_ENERGY) {
-		get_calc_param_energy(channel, param);
+		get_calc_param_energy(self, channel, param);
 	} else {
 		HLW811X_ERROR("Invalid type: %d", type);
 	}
 }
 
-static hlw811x_error_t send_frame(const uint8_t *data, size_t datalen)
+static hlw811x_error_t send_frame(const uint8_t *data, size_t datalen, void *ctx)
 {
 	int err;
 
-	if ((err = hlw811x_ll_write(data, datalen)) < 0) {
+	if ((err = hlw811x_ll_write(data, datalen, ctx)) < 0) {
 		HLW811X_ERROR("hlw811x_ll_write() failed: %x", err);
 		return HLW811X_IO_ERROR;
 	}
@@ -389,71 +393,73 @@ static hlw811x_error_t send_frame(const uint8_t *data, size_t datalen)
 	return HLW811X_ERROR_NONE;
 }
 
-static hlw811x_error_t write_cmd(hlw811x_reg_addr_t addr,
-		const uint8_t *data, size_t datalen)
+static hlw811x_error_t write_cmd(struct hlw811x *self,
+		hlw811x_reg_addr_t addr, const uint8_t *data, size_t datalen)
 {
 	uint8_t frame[datalen + 1/*addr*/ + 2/*header+chksum*/];
 	size_t frame_len;
 	hlw811x_error_t err;
 
-	if ((err = encode_frame(addr | 0x80u, frame, sizeof(frame),
+	if ((err = encode_frame(self->iface, addr | 0x80u, frame, sizeof(frame),
 				data, datalen, &frame_len))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
-	return send_frame(frame, frame_len);
+	return send_frame(frame, frame_len, self->ctx);
 }
 
-static hlw811x_error_t reset_chip(void)
+static hlw811x_error_t reset_chip(struct hlw811x *self)
 {
 	const uint8_t cmd = CMD_RESET_CHIP;
-	return write_cmd(HLW811X_REG_COMMAND, &cmd, 1);
+	return write_cmd(self, HLW811X_REG_COMMAND, &cmd, 1);
 }
 
-static hlw811x_error_t enable_write(void)
+static hlw811x_error_t enable_write(struct hlw811x *self)
 {
 	const uint8_t cmd = CMD_ENABLE_WRITE;
-	return write_cmd(HLW811X_REG_COMMAND, &cmd, 1);
+	return write_cmd(self, HLW811X_REG_COMMAND, &cmd, 1);
 }
 
-static hlw811x_error_t disable_write(void)
+static hlw811x_error_t disable_write(struct hlw811x *self)
 {
 	const uint8_t cmd = CMD_DISABLE_WRITE;
-	return write_cmd(HLW811X_REG_COMMAND, &cmd, 1);
+	return write_cmd(self, HLW811X_REG_COMMAND, &cmd, 1);
 }
 
-static hlw811x_error_t write_reg(hlw811x_reg_addr_t addr,
-		const uint8_t *data, size_t datalen)
+static hlw811x_error_t write_reg(struct hlw811x *self,
+		hlw811x_reg_addr_t addr, const uint8_t *data, size_t datalen)
 {
 	hlw811x_error_t err;
 
-	if ((err = enable_write()) != HLW811X_ERROR_NONE) {
+	if ((err = enable_write(self)) != HLW811X_ERROR_NONE) {
 		HLW811X_ERROR("enable_write() failed");
 		return err;
 	}
 
-	if ((err = write_cmd(addr, data, datalen)) != HLW811X_ERROR_NONE) {
-		disable_write();
+	if ((err = write_cmd(self, addr, data, datalen))
+			!= HLW811X_ERROR_NONE) {
+		disable_write(self);
 		HLW811X_ERROR("write_cmd() failed");
 		return err;
 	}
 
-	if ((err = disable_write()) != HLW811X_ERROR_NONE) {
+	if ((err = disable_write(self)) != HLW811X_ERROR_NONE) {
 		HLW811X_ERROR("disable_write() failed");
 	}
 
 	return err;
 }
 
-static hlw811x_error_t write_reg16(hlw811x_reg_addr_t addr, const uint16_t val)
+static hlw811x_error_t write_reg16(struct hlw811x *self,
+		hlw811x_reg_addr_t addr, const uint16_t val)
 {
 	uint8_t tmp[2] = { (uint8_t)(val >> 8), (uint8_t)val };
-	return write_reg(addr, tmp, sizeof(tmp));
+	return write_reg(self, addr, tmp, sizeof(tmp));
 }
 
-static hlw811x_error_t read_reg(hlw811x_reg_addr_t addr,
-		uint8_t *buf, size_t bytes_to_read)
+static hlw811x_error_t read_reg(struct hlw811x *self,
+		hlw811x_reg_addr_t addr, uint8_t *buf, size_t bytes_to_read)
 {
 	hlw811x_error_t err;
 	int bytes_received;
@@ -462,38 +468,40 @@ static hlw811x_error_t read_reg(hlw811x_reg_addr_t addr,
 	size_t encoded_len;
 	size_t tx_len;
 
-	if ((err = encode_frame(addr, tx, sizeof(tx), 0, 0, &encoded_len))
-			!= HLW811X_ERROR_NONE) {
+	if ((err = encode_frame(self->iface, addr, tx, sizeof(tx),
+			0, 0, &encoded_len)) != HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	tx_len = encoded_len;
-	if (m.iface == HLW811X_UART) {
+	if (self->iface == HLW811X_UART) {
 		tx_len -= 1; /* do not send chksum */
 	}
 
-	if ((err = send_frame(tx, tx_len)) != HLW811X_ERROR_NONE) {
+	if ((err = send_frame(tx, tx_len, self->ctx)) != HLW811X_ERROR_NONE) {
 		return err;
 	}
 
-	if ((bytes_received = hlw811x_ll_read(rx, sizeof(rx))) < 0) {
+	if ((bytes_received = hlw811x_ll_read(rx, sizeof(rx), self->ctx)) < 0) {
 		HLW811X_ERROR("hlw811x_ll_read() failed");
 		return HLW811X_IO_ERROR;
 	} else if (bytes_received == 0) {
 		return HLW811X_NO_RESPONSE;
 	}
 
-	err = decode_frame(buf, bytes_to_read, tx, encoded_len,
+	err = decode_frame(self->iface, buf, bytes_to_read, tx, encoded_len,
 			rx, (size_t)bytes_received);
 	return err;
 }
 
-static hlw811x_error_t read_reg16(hlw811x_reg_addr_t addr, uint16_t *reg)
+static hlw811x_error_t read_reg16(struct hlw811x *self,
+		hlw811x_reg_addr_t addr, uint16_t *reg)
 {
 	uint8_t buf[2];
 	hlw811x_error_t err;
 
-	if ((err = read_reg(addr, buf, sizeof(buf))) != HLW811X_ERROR_NONE) {
+	if ((err = read_reg(self, addr, buf, sizeof(buf)))
+			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
@@ -502,7 +510,8 @@ static hlw811x_error_t read_reg16(hlw811x_reg_addr_t addr, uint16_t *reg)
 	return err;
 }
 
-static hlw811x_error_t select_channel(hlw811x_channel_t channel)
+static hlw811x_error_t select_channel(struct hlw811x *self,
+		hlw811x_channel_t channel)
 {
 	uint8_t cmd;
 
@@ -518,15 +527,16 @@ static hlw811x_error_t select_channel(hlw811x_channel_t channel)
 		return HLW811X_INVALID_PARAM;
 	}
 
-	return write_cmd(HLW811X_REG_COMMAND, &cmd, 1);
+	return write_cmd(self, HLW811X_REG_COMMAND, &cmd, 1);
 }
 
-static hlw811x_error_t read_current_channel(hlw811x_channel_t *channel)
+static hlw811x_error_t read_current_channel(struct hlw811x *self,
+		hlw811x_channel_t *channel)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_STATUS, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_STATUS, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -536,25 +546,25 @@ static hlw811x_error_t read_current_channel(hlw811x_channel_t *channel)
 	return HLW811X_ERROR_NONE;
 }
 
-hlw811x_error_t hlw811x_write_reg(hlw811x_reg_addr_t addr,
-		const uint8_t *data, size_t datalen)
+hlw811x_error_t hlw811x_write_reg(struct hlw811x *self,
+		hlw811x_reg_addr_t addr, const uint8_t *data, size_t datalen)
 {
-	return write_reg(addr, data, datalen);
+	return write_reg(self, addr, data, datalen);
 }
 
-hlw811x_error_t hlw811x_read_reg(hlw811x_reg_addr_t addr,
-		uint8_t *buf, size_t bufsize)
+hlw811x_error_t hlw811x_read_reg(struct hlw811x *self,
+		hlw811x_reg_addr_t addr, uint8_t *buf, size_t bufsize)
 {
-	return read_reg(addr, buf, bufsize);
+	return read_reg(self, addr, buf, bufsize);
 }
 
-hlw811x_error_t hlw811x_set_active_power_calc_mode(hlw811x_active_power_mode_t
-		mode)
+hlw811x_error_t hlw811x_set_active_power_calc_mode(struct hlw811x *self,
+		hlw811x_active_power_mode_t mode)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -562,16 +572,16 @@ hlw811x_error_t hlw811x_set_active_power_calc_mode(hlw811x_active_power_mode_t
 	reg &= ~(3 << 10); /* clear Pmode bit */
 	reg |= (mode << 10);
 
-	return write_reg16(HLW811X_REG_METER_CTRL, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL, reg);
 }
 
-hlw811x_error_t hlw811x_get_active_power_calc_mode(hlw811x_active_power_mode_t
-		*mode)
+hlw811x_error_t hlw811x_get_active_power_calc_mode(struct hlw811x *self,
+		hlw811x_active_power_mode_t *mode)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -581,12 +591,13 @@ hlw811x_error_t hlw811x_get_active_power_calc_mode(hlw811x_active_power_mode_t
 	return HLW811X_ERROR_NONE;
 }
 
-hlw811x_error_t hlw811x_set_rms_calc_mode(hlw811x_rms_mode_t mode)
+hlw811x_error_t hlw811x_set_rms_calc_mode(struct hlw811x *self,
+		hlw811x_rms_mode_t mode)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -594,15 +605,16 @@ hlw811x_error_t hlw811x_set_rms_calc_mode(hlw811x_rms_mode_t mode)
 	reg &= ~(3 << 9); /* clear DC_MODE bit */
 	reg |= (mode << 9);
 
-	return write_reg16(HLW811X_REG_METER_CTRL, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL, reg);
 }
 
-hlw811x_error_t hlw811x_get_rms_calc_mode(hlw811x_rms_mode_t *mode)
+hlw811x_error_t hlw811x_get_rms_calc_mode(struct hlw811x *self,
+		hlw811x_rms_mode_t *mode)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -612,12 +624,13 @@ hlw811x_error_t hlw811x_get_rms_calc_mode(hlw811x_rms_mode_t *mode)
 	return HLW811X_ERROR_NONE;
 }
 
-hlw811x_error_t hlw811x_enable_pulse(hlw811x_channel_t channel)
+hlw811x_error_t hlw811x_enable_pulse(struct hlw811x *self,
+		hlw811x_channel_t channel)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -629,15 +642,16 @@ hlw811x_error_t hlw811x_enable_pulse(hlw811x_channel_t channel)
 		reg |= 1 << 1; /* PBRUN */
 	}
 
-	return write_reg16(HLW811X_REG_METER_CTRL, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL, reg);
 }
 
-hlw811x_error_t hlw811x_disable_pulse(hlw811x_channel_t channel)
+hlw811x_error_t hlw811x_disable_pulse(struct hlw811x *self,
+		hlw811x_channel_t channel)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -649,16 +663,16 @@ hlw811x_error_t hlw811x_disable_pulse(hlw811x_channel_t channel)
 		reg &= ~(1 << 1); /* PBRUN */
 	}
 
-	return write_reg16(HLW811X_REG_METER_CTRL, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL, reg);
 }
 
-hlw811x_error_t hlw811x_set_data_update_frequency(hlw811x_data_update_freq_t
-		freq)
+hlw811x_error_t hlw811x_set_data_update_frequency(struct hlw811x *self,
+		hlw811x_data_update_freq_t freq)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL_2, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL_2, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -666,16 +680,16 @@ hlw811x_error_t hlw811x_set_data_update_frequency(hlw811x_data_update_freq_t
 	reg &= ~(3 << 8); /* clear DUP bit */
 	reg |= (freq << 8);
 
-	return write_reg16(HLW811X_REG_METER_CTRL_2, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL_2, reg);
 }
 
-hlw811x_error_t hlw811x_get_data_update_frequency(hlw811x_data_update_freq_t
-		*freq)
+hlw811x_error_t hlw811x_get_data_update_frequency(struct hlw811x *self,
+		hlw811x_data_update_freq_t *freq)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL_2, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL_2, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -685,12 +699,13 @@ hlw811x_error_t hlw811x_get_data_update_frequency(hlw811x_data_update_freq_t
 	return HLW811X_ERROR_NONE;
 }
 
-hlw811x_error_t hlw811x_set_channel_b_mode(hlw811x_channel_b_mode_t mode)
+hlw811x_error_t hlw811x_set_channel_b_mode(struct hlw811x *self,
+		hlw811x_channel_b_mode_t mode)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL_2, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL_2, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -698,15 +713,16 @@ hlw811x_error_t hlw811x_set_channel_b_mode(hlw811x_channel_b_mode_t mode)
 	reg &= ~(1 << 7); /* clear CHS_IB bit */
 	reg |= (mode << 7);
 
-	return write_reg16(HLW811X_REG_METER_CTRL_2, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL_2, reg);
 }
 
-hlw811x_error_t hlw811x_get_channel_b_mode(hlw811x_channel_b_mode_t *mode)
+hlw811x_error_t hlw811x_get_channel_b_mode(struct hlw811x *self,
+		hlw811x_channel_b_mode_t *mode)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL_2, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL_2, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -716,12 +732,13 @@ hlw811x_error_t hlw811x_get_channel_b_mode(hlw811x_channel_b_mode_t *mode)
 	return HLW811X_ERROR_NONE;
 }
 
-hlw811x_error_t hlw811x_set_zerocrossing_mode(hlw811x_zerocrossing_mode_t mode)
+hlw811x_error_t hlw811x_set_zerocrossing_mode(struct hlw811x *self,
+		hlw811x_zerocrossing_mode_t mode)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -729,16 +746,16 @@ hlw811x_error_t hlw811x_set_zerocrossing_mode(hlw811x_zerocrossing_mode_t mode)
 	reg &= ~(3 << 7); /* clear ZXDx bits */
 	reg |= (mode << 7);
 
-	return write_reg16(HLW811X_REG_METER_CTRL_2, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL_2, reg);
 }
 
-hlw811x_error_t hlw811x_get_zerocrossing_mode(hlw811x_zerocrossing_mode_t
-		*mode)
+hlw811x_error_t hlw811x_get_zerocrossing_mode(struct hlw811x *self,
+		hlw811x_zerocrossing_mode_t *mode)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -748,102 +765,103 @@ hlw811x_error_t hlw811x_get_zerocrossing_mode(hlw811x_zerocrossing_mode_t
 	return HLW811X_ERROR_NONE;
 }
 
-hlw811x_error_t hlw811x_enable_waveform(void)
+hlw811x_error_t hlw811x_enable_waveform(struct hlw811x *self)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL_2, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL_2, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	reg |= 1 << 5; /* WaveEN */
 
-	return write_reg16(HLW811X_REG_METER_CTRL_2, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL_2, reg);
 }
 
-hlw811x_error_t hlw811x_disable_waveform(void)
+hlw811x_error_t hlw811x_disable_waveform(struct hlw811x *self)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL_2, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL_2, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	reg &= ~(1 << 5); /* WaveEN */
 
-	return write_reg16(HLW811X_REG_METER_CTRL_2, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL_2, reg);
 }
 
-hlw811x_error_t hlw811x_enable_zerocrossing(void)
+hlw811x_error_t hlw811x_enable_zerocrossing(struct hlw811x *self)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL_2, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL_2, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	reg |= 1 << 2; /* ZxEN */
 
-	return write_reg16(HLW811X_REG_METER_CTRL_2, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL_2, reg);
 }
 
-hlw811x_error_t hlw811x_disable_zerocrossing(void)
+hlw811x_error_t hlw811x_disable_zerocrossing(struct hlw811x *self)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL_2, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL_2, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	reg &= ~(1 << 2); /* ZxEN */
 
-	return write_reg16(HLW811X_REG_METER_CTRL_2, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL_2, reg);
 }
 
-hlw811x_error_t hlw811x_enable_power_factor(void)
+hlw811x_error_t hlw811x_enable_power_factor(struct hlw811x *self)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL_2, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL_2, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	reg |= 1 << 6; /* PfactorEN */
 
-	return write_reg16(HLW811X_REG_METER_CTRL_2, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL_2, reg);
 }
 
-hlw811x_error_t hlw811x_disable_power_factor(void)
+hlw811x_error_t hlw811x_disable_power_factor(struct hlw811x *self)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL_2, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL_2, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	reg &= ~(1 << 6); /* PfactorEN */
 
-	return write_reg16(HLW811X_REG_METER_CTRL_2, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL_2, reg);
 }
 
-hlw811x_error_t hlw811x_enable_energy_clearance(hlw811x_channel_t channel)
+hlw811x_error_t hlw811x_enable_energy_clearance(struct hlw811x *self,
+		hlw811x_channel_t channel)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL_2, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL_2, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -855,15 +873,16 @@ hlw811x_error_t hlw811x_enable_energy_clearance(hlw811x_channel_t channel)
 		reg &= ~(1 << 11); /* EPA_CB */
 	}
 
-	return write_reg16(HLW811X_REG_METER_CTRL_2, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL_2, reg);
 }
 
-hlw811x_error_t hlw811x_disable_energy_clearance(hlw811x_channel_t channel)
+hlw811x_error_t hlw811x_disable_energy_clearance(struct hlw811x *self,
+		hlw811x_channel_t channel)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL_2, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL_2, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -875,15 +894,16 @@ hlw811x_error_t hlw811x_disable_energy_clearance(hlw811x_channel_t channel)
 		reg |= 1 << 11; /* EPA_CB */
 	}
 
-	return write_reg16(HLW811X_REG_METER_CTRL_2, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL_2, reg);
 }
 
-hlw811x_error_t hlw811x_enable_hpf(hlw811x_channel_t channel)
+hlw811x_error_t hlw811x_enable_hpf(struct hlw811x *self,
+		hlw811x_channel_t channel)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -898,15 +918,16 @@ hlw811x_error_t hlw811x_enable_hpf(hlw811x_channel_t channel)
 		reg &= ~(1 << 6); /* HPFBOFF */
 	}
 
-	return write_reg16(HLW811X_REG_METER_CTRL, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL, reg);
 }
 
-hlw811x_error_t hlw811x_disable_hpf(hlw811x_channel_t channel)
+hlw811x_error_t hlw811x_disable_hpf(struct hlw811x *self,
+		hlw811x_channel_t channel)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -921,189 +942,193 @@ hlw811x_error_t hlw811x_disable_hpf(hlw811x_channel_t channel)
 		reg |= 1 << 6; /* HPFBOFF */
 	}
 
-	return write_reg16(HLW811X_REG_METER_CTRL, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL, reg);
 }
 
-hlw811x_error_t hlw811x_enable_b_channel_comparator(void)
+hlw811x_error_t hlw811x_enable_b_channel_comparator(struct hlw811x *self)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	reg &= ~(1 << 12); /* comp_off */
 
-	return write_reg16(HLW811X_REG_METER_CTRL, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL, reg);
 }
 
-hlw811x_error_t hlw811x_disable_b_channel_comparator(void)
+hlw811x_error_t hlw811x_disable_b_channel_comparator(struct hlw811x *self)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	reg |= 1 << 12; /* comp_off */
 
-	return write_reg16(HLW811X_REG_METER_CTRL, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL, reg);
 }
 
-hlw811x_error_t hlw811x_enable_temperature_sensor(void)
+hlw811x_error_t hlw811x_enable_temperature_sensor(struct hlw811x *self)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	reg |= 1 << 13; /* tensor_en */
 
-	return write_reg16(HLW811X_REG_METER_CTRL, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL, reg);
 }
 
-hlw811x_error_t hlw811x_disable_temperature_sensor(void)
+hlw811x_error_t hlw811x_disable_temperature_sensor(struct hlw811x *self)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	reg &= ~(1 << 13); /* tensor_en */
 
-	return write_reg16(HLW811X_REG_METER_CTRL, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL, reg);
 }
 
-hlw811x_error_t hlw811x_enable_peak_detection(void)
+hlw811x_error_t hlw811x_enable_peak_detection(struct hlw811x *self)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL_2, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL_2, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	reg |= 1 << 1; /* PeakEN */
 
-	return write_reg16(HLW811X_REG_METER_CTRL_2, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL_2, reg);
 }
 
-hlw811x_error_t hlw811x_disable_peak_detection(void)
+hlw811x_error_t hlw811x_disable_peak_detection(struct hlw811x *self)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL_2, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL_2, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	reg &= ~(1 << 1); /* PeakEN */
 
-	return write_reg16(HLW811X_REG_METER_CTRL_2, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL_2, reg);
 }
 
-hlw811x_error_t hlw811x_enable_overload_detection(void)
+hlw811x_error_t hlw811x_enable_overload_detection(struct hlw811x *self)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL_2, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL_2, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	reg |= 1 << 3; /* OverEN */
 
-	return write_reg16(HLW811X_REG_METER_CTRL_2, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL_2, reg);
 }
 
-hlw811x_error_t hlw811x_disable_overload_detection(void)
+hlw811x_error_t hlw811x_disable_overload_detection(struct hlw811x *self)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL_2, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL_2, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	reg &= ~(1 << 3); /* OverEN */
 
-	return write_reg16(HLW811X_REG_METER_CTRL_2, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL_2, reg);
 }
 
-hlw811x_error_t hlw811x_enable_voltage_drop_detection(void)
+hlw811x_error_t hlw811x_enable_voltage_drop_detection(struct hlw811x *self)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL_2, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL_2, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	reg |= 1 << 4; /* SAGEN */
 
-	return write_reg16(HLW811X_REG_METER_CTRL_2, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL_2, reg);
 }
 
-hlw811x_error_t hlw811x_disable_voltage_drop_detection(void)
+hlw811x_error_t hlw811x_disable_voltage_drop_detection(struct hlw811x *self)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_METER_CTRL_2, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_METER_CTRL_2, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	reg &= ~(1 << 4); /* SAGEN */
 
-	return write_reg16(HLW811X_REG_METER_CTRL_2, reg);
+	return write_reg16(self, HLW811X_REG_METER_CTRL_2, reg);
 }
 
-hlw811x_error_t hlw811x_enable_interrupt(hlw811x_intr_t ints)
+hlw811x_error_t hlw811x_enable_interrupt(struct hlw811x *self,
+		hlw811x_intr_t ints)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_IE, &reg)) != HLW811X_ERROR_NONE) {
+	if ((err = read_reg16(self, HLW811X_REG_IE, &reg))
+			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	reg |= ints;
 
-	return write_reg16(HLW811X_REG_IE, reg);
+	return write_reg16(self, HLW811X_REG_IE, reg);
 }
 
-hlw811x_error_t hlw811x_disable_interrupt(hlw811x_intr_t ints)
+hlw811x_error_t hlw811x_disable_interrupt(struct hlw811x *self,
+		hlw811x_intr_t ints)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_IE, &reg)) != HLW811X_ERROR_NONE) {
+	if ((err = read_reg16(self, HLW811X_REG_IE, &reg))
+			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	reg &= ~ints;
 
-	return write_reg16(HLW811X_REG_IE, reg);
+	return write_reg16(self, HLW811X_REG_IE, reg);
 }
 
-hlw811x_error_t hlw811x_set_interrupt_mode(hlw811x_intr_t int1,
-		hlw811x_intr_t int2)
+hlw811x_error_t hlw811x_set_interrupt_mode(struct hlw811x *self,
+		hlw811x_intr_t int1, hlw811x_intr_t int2)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
@@ -1112,7 +1137,8 @@ hlw811x_error_t hlw811x_set_interrupt_mode(hlw811x_intr_t int1,
 		return HLW811X_INVALID_PARAM;
 	}
 
-	if ((err = read_reg16(HLW811X_REG_INT, &reg)) != HLW811X_ERROR_NONE) {
+	if ((err = read_reg16(self, HLW811X_REG_INT, &reg))
+			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
@@ -1122,15 +1148,17 @@ hlw811x_error_t hlw811x_set_interrupt_mode(hlw811x_intr_t int1,
 	reg |= (get_regval_from_intr(int1) << 0)
 		| (get_regval_from_intr(int2) << 4);
 
-	return write_reg16(HLW811X_REG_INT, reg);
+	return write_reg16(self, HLW811X_REG_INT, reg);
 }
 
-hlw811x_error_t hlw811x_get_interrupt(hlw811x_intr_t *ints)
+hlw811x_error_t hlw811x_get_interrupt(struct hlw811x *self,
+		hlw811x_intr_t *ints)
 {
 	hlw811x_error_t err;
 	uint8_t reg[2];
 
-	if ((err = read_reg(HLW811X_REG_IF, reg, 2)) != HLW811X_ERROR_NONE) {
+	if ((err = read_reg(self, HLW811X_REG_IF, reg, 2))
+			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
@@ -1139,12 +1167,14 @@ hlw811x_error_t hlw811x_get_interrupt(hlw811x_intr_t *ints)
 	return HLW811X_ERROR_NONE;
 }
 
-hlw811x_error_t hlw811x_get_interrupt_ext(hlw811x_intr_t *ints)
+hlw811x_error_t hlw811x_get_interrupt_ext(struct hlw811x *self,
+		hlw811x_intr_t *ints)
 {
 	hlw811x_error_t err;
 	uint8_t reg[2];
 
-	if ((err = read_reg(HLW811X_REG_RIF, reg, 2)) != HLW811X_ERROR_NONE) {
+	if ((err = read_reg(self, HLW811X_REG_RIF, reg, 2))
+			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
@@ -1153,15 +1183,16 @@ hlw811x_error_t hlw811x_get_interrupt_ext(hlw811x_intr_t *ints)
 	return HLW811X_ERROR_NONE;
 }
 
-hlw811x_error_t hlw811x_get_rms(hlw811x_channel_t channel, int32_t *milliunit)
+hlw811x_error_t hlw811x_get_rms(struct hlw811x *self,
+		hlw811x_channel_t channel, int32_t *milliunit)
 {
 	hlw811x_error_t err;
 	uint8_t buf[3];
 	struct calc_param param;
 
-	get_calc_param(channel, CALC_TYPE_RMS, &param);
+	get_calc_param(self, channel, CALC_TYPE_RMS, &param);
 
-	if ((err = read_reg(param.addr, buf, sizeof(buf)))
+	if ((err = read_reg(self, param.addr, buf, sizeof(buf)))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -1187,35 +1218,40 @@ hlw811x_error_t hlw811x_get_rms(hlw811x_channel_t channel, int32_t *milliunit)
 	return HLW811X_ERROR_NONE;
 }
 
-hlw811x_error_t hlw811x_get_power(hlw811x_channel_t channel, int32_t *milliwatt)
+hlw811x_error_t hlw811x_get_power(struct hlw811x *self,
+		hlw811x_channel_t channel, int32_t *milliwatt)
 {
 	hlw811x_error_t err;
 	uint8_t buf[4];
 	struct calc_param param;
 
-	get_calc_param(channel, CALC_TYPE_POWER, &param);
+	get_calc_param(self, channel, CALC_TYPE_POWER, &param);
 
-	if ((err = read_reg(param.addr, buf, sizeof(buf)))
+	if ((err = read_reg(self, param.addr, buf, sizeof(buf)))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	const int32_t raw = convert_32bits_to_int32(buf);
-	uint16_t K2 = convert_float_to_uint16_centi(m.ratio.K2);
-	hlw811x_pga_gain_t k2_pga = m.pga.U;
+	uint16_t K2 = convert_float_to_uint16_centi(self->ratio.K2);
+	hlw811x_pga_gain_t k2_pga = self->pga.U;
 
 	if (channel == HLW811X_CHANNEL_U) {
 		hlw811x_channel_t ch;
+#if 0
 		if ((err = read_current_channel(&ch)) != HLW811X_ERROR_NONE) {
 			return err;
 		}
+#else
+		ch = HLW811X_CHANNEL_A;
+#endif
 
 		if (ch == HLW811X_CHANNEL_A) {
-			K2 = convert_float_to_uint16_centi(m.ratio.K1_A);
-			k2_pga = m.pga.A;
+			K2 = convert_float_to_uint16_centi(self->ratio.K1_A);
+			k2_pga = self->pga.A;
 		} else if (ch == HLW811X_CHANNEL_B) {
-			K2 = convert_float_to_uint16_centi(m.ratio.K1_B);
-			k2_pga = m.pga.B;
+			K2 = convert_float_to_uint16_centi(self->ratio.K1_B);
+			k2_pga = self->pga.B;
 		}
 	}
 
@@ -1230,24 +1266,25 @@ hlw811x_error_t hlw811x_get_power(hlw811x_channel_t channel, int32_t *milliwatt)
 	return HLW811X_ERROR_NONE;
 }
 
-hlw811x_error_t hlw811x_get_energy(hlw811x_channel_t channel, int32_t *Wh)
+hlw811x_error_t hlw811x_get_energy(struct hlw811x *self,
+		hlw811x_channel_t channel, int32_t *Wh)
 {
 	hlw811x_error_t err;
 	uint8_t buf[3];
 	struct calc_param param;
 
-	get_calc_param(channel, CALC_TYPE_ENERGY, &param);
+	get_calc_param(self, channel, CALC_TYPE_ENERGY, &param);
 
-	if ((err = read_reg(param.addr, buf, sizeof(buf)))
+	if ((err = read_reg(self, param.addr, buf, sizeof(buf)))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	const int32_t raw = convert_24bits_to_int32(buf);
-	const int32_t pga = (1 << m.pga.U) * (1 << param.pga);
-	const uint16_t K2 = convert_float_to_uint16_centi(m.ratio.K2);
+	const int32_t pga = (1 << self->pga.U) * (1 << param.pga);
+	const uint16_t K2 = convert_float_to_uint16_centi(self->ratio.K2);
 	const int64_t div = param.ratio * K2 * 4096;
-	int64_t val = (int64_t)raw * param.coeff * m.coeff.hfconst;
+	int64_t val = (int64_t)raw * param.coeff * self->coeff.hfconst;
 	val = val * 100/*watt unit*/
 		/ param.resol * 10000/*K1,K2 scaling*/ * 10/*watt unit*/ * pga;
 	val = val / div;
@@ -1257,12 +1294,12 @@ hlw811x_error_t hlw811x_get_energy(hlw811x_channel_t channel, int32_t *Wh)
 	return HLW811X_ERROR_NONE;
 }
 
-hlw811x_error_t hlw811x_get_frequency(int32_t *centihertz)
+hlw811x_error_t hlw811x_get_frequency(struct hlw811x *self, int32_t *centihertz)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_FREQUENCY_L_LINE, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_FREQUENCY_L_LINE, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -1275,29 +1312,30 @@ hlw811x_error_t hlw811x_get_frequency(int32_t *centihertz)
 	return HLW811X_ERROR_NONE;
 }
 
-hlw811x_error_t hlw811x_get_power_factor(int32_t *centiunit)
+hlw811x_error_t hlw811x_get_power_factor(struct hlw811x *self, int32_t *centi)
 {
 	hlw811x_error_t err;
 	uint8_t buf[3];
 
-	if ((err = read_reg(HLW811X_REG_POWER_FACTOR, buf, sizeof(buf)))
+	if ((err = read_reg(self, HLW811X_REG_POWER_FACTOR, buf, sizeof(buf)))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
 	int32_t val = fix_bit24_sign(convert_24bits_to_int32(buf));
-	*centiunit = val * 100 / ((1 << 23) - 1);
+	*centi = val * 100 / ((1 << 23) - 1);
 
 	return HLW811X_ERROR_NONE;
 }
 
-hlw811x_error_t hlw811x_get_phase_angle(int32_t *centidegree,
-		hlw811x_line_freq_t freq)
+hlw811x_error_t hlw811x_get_phase_angle(struct hlw811x *self,
+		int32_t *centidegree, hlw811x_line_freq_t freq)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_ANGLE, &reg)) != HLW811X_ERROR_NONE) {
+	if ((err = read_reg16(self, HLW811X_REG_ANGLE, &reg))
+			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
 
@@ -1312,36 +1350,39 @@ hlw811x_error_t hlw811x_get_phase_angle(int32_t *centidegree,
 	return HLW811X_ERROR_NONE;
 }
 
-hlw811x_error_t hlw811x_select_channel(hlw811x_channel_t channel)
+hlw811x_error_t hlw811x_select_channel(struct hlw811x *self,
+		hlw811x_channel_t channel)
 {
-	return select_channel(channel);
+	return select_channel(self, channel);
 }
 
-hlw811x_error_t hlw811x_read_current_channel(hlw811x_channel_t *channel)
+hlw811x_error_t hlw811x_read_current_channel(struct hlw811x *self,
+		hlw811x_channel_t *channel)
 {
-	return read_current_channel(channel);
+	return read_current_channel(self, channel);
 }
 
-hlw811x_error_t hlw811x_read_coeff(struct hlw811x_coeff *coeff)
+hlw811x_error_t hlw811x_read_coeff(struct hlw811x *self,
+		struct hlw811x_coeff *coeff)
 {
 	hlw811x_error_t err;
 	uint16_t chksum;
 
-	err = read_reg16(HLW811X_REG_PULSE_FREQ, &coeff->hfconst);
-	err |= read_reg16(HLW811X_REG_RMS_IA_COEFF, &coeff->rms.A);
-	err |= read_reg16(HLW811X_REG_RMS_IB_COEFF, &coeff->rms.B);
-	err |= read_reg16(HLW811X_REG_RMS_U_COEFF, &coeff->rms.U);
-	err |= read_reg16(HLW811X_REG_POWER_A_COEFF, &coeff->power.A);
-	err |= read_reg16(HLW811X_REG_POWER_B_COEFF, &coeff->power.B);
-	err |= read_reg16(HLW811X_REG_POWER_S_COEFF, &coeff->power.S);
-	err |= read_reg16(HLW811X_REG_ENERGY_A_COEFF, &coeff->energy.A);
-	err |= read_reg16(HLW811X_REG_ENERGY_B_COEFF, &coeff->energy.B);
+	err = read_reg16(self, HLW811X_REG_PULSE_FREQ, &coeff->hfconst);
+	err |= read_reg16(self, HLW811X_REG_RMS_IA_COEFF, &coeff->rms.A);
+	err |= read_reg16(self, HLW811X_REG_RMS_IB_COEFF, &coeff->rms.B);
+	err |= read_reg16(self, HLW811X_REG_RMS_U_COEFF, &coeff->rms.U);
+	err |= read_reg16(self, HLW811X_REG_POWER_A_COEFF, &coeff->power.A);
+	err |= read_reg16(self, HLW811X_REG_POWER_B_COEFF, &coeff->power.B);
+	err |= read_reg16(self, HLW811X_REG_POWER_S_COEFF, &coeff->power.S);
+	err |= read_reg16(self, HLW811X_REG_ENERGY_A_COEFF, &coeff->energy.A);
+	err |= read_reg16(self, HLW811X_REG_ENERGY_B_COEFF, &coeff->energy.B);
 
 	if (err != HLW811X_ERROR_NONE) {
 		return err;
 	}
 
-	if ((err = read_reg16(HLW811X_REG_COEFF_CHKSUM, &chksum))
+	if ((err = read_reg16(self, HLW811X_REG_COEFF_CHKSUM, &chksum))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -1355,7 +1396,7 @@ hlw811x_error_t hlw811x_read_coeff(struct hlw811x_coeff *coeff)
 		return HLW811X_CHECKSUM_MISMATCH;
 	}
 
-	memcpy(&m.coeff, coeff, sizeof(m.coeff));
+	memcpy(&self->coeff, coeff, sizeof(self->coeff));
 
 	HLW811X_DEBUG("Coefficients: HFConst=%d, "
 			"RMS_A=%d, RMS_B=%d, RMS_U=%d, "
@@ -1369,24 +1410,27 @@ hlw811x_error_t hlw811x_read_coeff(struct hlw811x_coeff *coeff)
 	return err;
 }
 
-void hlw811x_set_resistor_ratio(const struct hlw811x_resistor_ratio *ratio)
+void hlw811x_set_resistor_ratio(struct hlw811x *self,
+		const struct hlw811x_resistor_ratio *ratio)
 {
-	memcpy(&m.ratio, ratio, sizeof(m.ratio));
+	memcpy(&self->ratio, ratio, sizeof(self->ratio));
 	HLW811X_INFO("Resistor ratio set: K1_A=%d, K1_B=%d, K2=%d",
 			ratio->K1_A, ratio->K1_B, ratio->K2);
 }
 
-void hlw811x_get_resistor_ratio(struct hlw811x_resistor_ratio *ratio)
+void hlw811x_get_resistor_ratio(struct hlw811x *self,
+		struct hlw811x_resistor_ratio *ratio)
 {
-	memcpy(ratio, &m.ratio, sizeof(m.ratio));
+	memcpy(ratio, &self->ratio, sizeof(self->ratio));
 }
 
-hlw811x_error_t hlw811x_set_pga(const struct hlw811x_pga *pga)
+hlw811x_error_t hlw811x_set_pga(struct hlw811x *self,
+		const struct hlw811x_pga *pga)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_SYS_CTRL, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_SYS_CTRL, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -1394,9 +1438,9 @@ hlw811x_error_t hlw811x_set_pga(const struct hlw811x_pga *pga)
 	reg &= ~(0x1FF << 0); /* clear PGA bits */
 	reg |= (pga->A << 0) | (pga->U << 3) | (pga->B << 6);
 
-	if ((err = write_reg16(HLW811X_REG_SYS_CTRL, reg))
+	if ((err = write_reg16(self, HLW811X_REG_SYS_CTRL, reg))
 			== HLW811X_ERROR_NONE) {
-		memcpy(&m.pga, pga, sizeof(m.pga));
+		memcpy(&self->pga, pga, sizeof(self->pga));
 		HLW811X_INFO("PGA set: A=%d, U=%d, B=%d",
 				pga->A, pga->U, pga->B);
 	}
@@ -1404,12 +1448,12 @@ hlw811x_error_t hlw811x_set_pga(const struct hlw811x_pga *pga)
 	return err;
 }
 
-hlw811x_error_t hlw811x_get_pga(struct hlw811x_pga *pga)
+hlw811x_error_t hlw811x_get_pga(struct hlw811x *self, struct hlw811x_pga *pga)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_SYS_CTRL, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_SYS_CTRL, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -1418,17 +1462,18 @@ hlw811x_error_t hlw811x_get_pga(struct hlw811x_pga *pga)
 	pga->U = (reg >> 3) & 0x07; /* PGAU */
 	pga->B = (reg >> 6) & 0x07; /* PGAIB */
 
-	memcpy(&m.pga, pga, sizeof(m.pga));
+	memcpy(&self->pga, pga, sizeof(self->pga));
 
 	return HLW811X_ERROR_NONE;
 }
 
-hlw811x_error_t hlw811x_enable_channel(hlw811x_channel_t channel)
+hlw811x_error_t hlw811x_enable_channel(struct hlw811x *self,
+		hlw811x_channel_t channel)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_SYS_CTRL, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_SYS_CTRL, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -1443,7 +1488,7 @@ hlw811x_error_t hlw811x_enable_channel(hlw811x_channel_t channel)
 		reg |= 1 << 11; /* ADC3ON */
 	}
 
-	if ((err = write_reg16(HLW811X_REG_SYS_CTRL, reg))
+	if ((err = write_reg16(self, HLW811X_REG_SYS_CTRL, reg))
 			== HLW811X_ERROR_NONE) {
 		HLW811X_INFO("Channel enabled: %d", channel);
 	}
@@ -1451,12 +1496,13 @@ hlw811x_error_t hlw811x_enable_channel(hlw811x_channel_t channel)
 	return err;
 }
 
-hlw811x_error_t hlw811x_disable_channel(hlw811x_channel_t channel)
+hlw811x_error_t hlw811x_disable_channel(struct hlw811x *self,
+		hlw811x_channel_t channel)
 {
 	hlw811x_error_t err;
 	uint16_t reg;
 
-	if ((err = read_reg16(HLW811X_REG_SYS_CTRL, &reg))
+	if ((err = read_reg16(self, HLW811X_REG_SYS_CTRL, &reg))
 			!= HLW811X_ERROR_NONE) {
 		return err;
 	}
@@ -1471,7 +1517,7 @@ hlw811x_error_t hlw811x_disable_channel(hlw811x_channel_t channel)
 		reg &= ~(1 << 11); /* ADC3ON */
 	}
 
-	if ((err = write_reg16(HLW811X_REG_SYS_CTRL, reg))
+	if ((err = write_reg16(self, HLW811X_REG_SYS_CTRL, reg))
 			== HLW811X_ERROR_NONE) {
 		HLW811X_INFO("Channel disabled: %d", channel);
 	}
@@ -1479,17 +1525,28 @@ hlw811x_error_t hlw811x_disable_channel(hlw811x_channel_t channel)
 	return err;
 }
 
-hlw811x_error_t hlw811x_reset(void)
+hlw811x_error_t hlw811x_reset(struct hlw811x *self)
 {
 	HLW811X_INFO("Resetting HLW811X chip");
-	return reset_chip();
+	return reset_chip(self);
 }
 
-hlw811x_error_t hlw811x_init(hlw811x_interface_t interface)
+struct hlw811x *hlw811x_create(hlw811x_interface_t interface, void *ctx)
 {
-	memset(&m, 0, sizeof(m));
+	struct hlw811x *hlw811x;
 
-	m.iface = interface;
+	if ((hlw811x = malloc(sizeof(struct hlw811x))) == NULL) {
+		return NULL;
+	}
 
-	return HLW811X_ERROR_NONE;
+	memset(hlw811x, 0, sizeof(struct hlw811x));
+	hlw811x->iface = interface;
+	hlw811x->ctx = ctx;
+
+	return hlw811x;
+}
+
+void hlw811x_destroy(struct hlw811x *hlw811x)
+{
+	free(hlw811x);
 }
