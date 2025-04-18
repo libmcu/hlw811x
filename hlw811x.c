@@ -1253,7 +1253,7 @@ hlw811x_error_t hlw811x_get_power(struct hlw811x *self,
 		}
 	}
 
-	const int64_t div = param.ratio * K2;
+	const int64_t div = (int64_t)param.ratio * K2;
 	int32_t pga = 16l >> (param.pga + k2_pga);
 	int64_t val = (int64_t)raw * param.coeff * pga;
 	val = val * 1000/*milli*/ / param.resol * 10000/*K1,K2 scale*/;
@@ -1281,7 +1281,7 @@ hlw811x_error_t hlw811x_get_energy(struct hlw811x *self,
 	const int32_t raw = convert_24bits_to_int32(buf);
 	const int32_t pga = (1 << self->pga.U) * (1 << param.pga);
 	const uint16_t K2 = convert_float_to_uint16_centi(self->ratio.K2);
-	const int64_t div = param.ratio * K2 * 4096;
+	const int64_t div = (int64_t)param.ratio * K2 * 4096;
 	int64_t val = (int64_t)raw * param.coeff * self->coeff.hfconst;
 	val = val * 100/*watt unit*/
 		/ param.resol * 10000/*K1,K2 scaling*/ * 10/*watt unit*/ * pga;
