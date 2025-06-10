@@ -1203,13 +1203,7 @@ hlw811x_error_t hlw811x_get_rms(struct hlw811x *self,
 	/* Multiplied by 1000 first and then divide by 10 to avoid losing
 	 * significant digits during the calculation. */
 	int64_t val = ((int64_t)raw * param.coeff * 1000)
-		/ (param.ratio * param.resol);
-
-	if (channel == HLW811X_CHANNEL_U) {
-		val = val * param.mult / (1 << param.pga) / 10;
-	} else {
-		val = val * (16 >> param.pga) / 10;
-	}
+		/ (param.ratio * param.resol) / 10;
 
 	*milliunit = (int32_t)val;
 
@@ -1254,8 +1248,7 @@ hlw811x_error_t hlw811x_get_power(struct hlw811x *self,
 	}
 
 	const int64_t div = (int64_t)param.ratio * K2;
-	int32_t pga = 16l >> (param.pga + k2_pga);
-	int64_t val = (int64_t)raw * param.coeff * pga;
+	int64_t val = (int64_t)raw * param.coeff;
 	val = val * 1000/*milli*/ / param.resol * 10000/*K1,K2 scale*/;
 	val = val / div;
 
@@ -1279,12 +1272,11 @@ hlw811x_error_t hlw811x_get_energy(struct hlw811x *self,
 	}
 
 	const int32_t raw = convert_24bits_to_int32(buf);
-	const int32_t pga = (1 << self->pga.U) * (1 << param.pga);
 	const uint16_t K2 = convert_float_to_uint16_centi(self->ratio.K2);
 	const int64_t div = (int64_t)param.ratio * K2 * 4096;
 	int64_t val = (int64_t)raw * param.coeff * self->coeff.hfconst;
 	val = val * 100/*watt unit*/
-		/ param.resol * 10000/*K1,K2 scaling*/ * 10/*watt unit*/ * pga;
+		/ param.resol * 10000/*K1,K2 scaling*/ * 10/*watt unit*/;
 	val = val / div;
 
 	*Wh = (int32_t)val;
@@ -1396,10 +1388,10 @@ hlw811x_error_t hlw811x_read_coeff(struct hlw811x *self,
 
 	memcpy(&self->coeff, coeff, sizeof(self->coeff));
 
-	HLW811X_DEBUG("Coefficients: HFConst=%d, "
-			"RMS_A=%d, RMS_B=%d, RMS_U=%d, "
-			"Power_A=%d, Power_B=%d, Power_S=%d, "
-			"Energy_A=%d, Energy_B=%d",
+	HLW811X_DEBUG("Coefficients: HFConst=%x, "
+			"RMS_A=%x, RMS_B=%x, RMS_U=%x, "
+			"Power_A=%x, Power_B=%x, Power_S=%x, "
+			"Energy_A=%x, Energy_B=%x",
 			coeff->hfconst,
 			coeff->rms.A, coeff->rms.B, coeff->rms.U,
 			coeff->power.A, coeff->power.B, coeff->power.S,
@@ -1412,7 +1404,7 @@ void hlw811x_set_resistor_ratio(struct hlw811x *self,
 		const struct hlw811x_resistor_ratio *ratio)
 {
 	memcpy(&self->ratio, ratio, sizeof(self->ratio));
-	HLW811X_INFO("Resistor ratio set: K1_A=%d, K1_B=%d, K2=%d",
+	HLW811X_INFO("Resistor ratio set: K1_A=%f, K1_B=%f, K2=%f",
 			ratio->K1_A, ratio->K1_B, ratio->K2);
 }
 
