@@ -136,6 +136,21 @@ struct hlw811x_pga {
 	hlw811x_pga_gain_t U;
 };
 
+struct hlw811x_calibration {
+	uint16_t hfconst; /* pulse frequency constant */
+	uint16_t pa_gain; /* active power gain for channel A */
+	uint16_t pb_gain; /* active power gain for channel B */
+	uint8_t phase_a; /* phase angle gain for channel A */
+	uint8_t phase_b; /* phase angle gain for channel B */
+	uint16_t paos; /* active power offset for channel A */
+	uint16_t pbos; /* active power offset for channel B */
+	uint16_t rms_iaos; /* RMS offset for current channel A */
+	uint16_t rms_ibos; /* RMS offset for current channel B */
+	uint16_t ib_gain; /* gain for current channel B */
+	uint16_t ps_gain; /* gain for voltage channel */
+	uint16_t psos; /* apparent power offset */
+};
+
 /**
  * @brief Create and initialize an HLW811X device instance.
  *
@@ -178,6 +193,21 @@ void hlw811x_destroy(struct hlw811x *hlw811x);
  *                         failure of the reset operation.
  */
 hlw811x_error_t hlw811x_reset(struct hlw811x *self);
+
+/**
+ * @brief Apply calibration parameters to the HLW811X device.
+ *
+ * This function configures the HLW811X device with the provided calibration
+ * parameters to ensure accurate measurements.
+ *
+ * @param[in] self Pointer to the HLW811X device instance.
+ * @param[in] cal Pointer to the calibration parameters to be applied.
+ *
+ * @return hlw811x_error_t Error code indicating the success or failure of the
+ *         operation.
+ */
+hlw811x_error_t hlw811x_apply_calibration(struct hlw811x *self,
+		const struct hlw811x_calibration *cal);
 
 /**
  * @brief Write data to a specified HLW811X register.

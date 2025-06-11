@@ -1512,6 +1512,42 @@ hlw811x_error_t hlw811x_disable_channel(struct hlw811x *self,
 	return err;
 }
 
+hlw811x_error_t hlw811x_apply_calibration(struct hlw811x *self,
+		const struct hlw811x_calibration *cal)
+{
+#define swap16(x) (uint16_t)(((x) >> 8) | ((x) << 8))
+	uint16_t t;
+	uint8_t *p = (uint8_t *)&t;
+	hlw811x_error_t err = HLW811X_ERROR_NONE;
+
+	*p = swap16(cal->hfconst);
+	err |= write_reg(self, HLW811X_REG_PULSE_FREQ, p, sizeof(*p));
+	*p = swap16(cal->pa_gain);
+	err |= write_reg(self, HLW811X_REG_POWER_GAIN_A, p, sizeof(*p));
+	*p = swap16(cal->pb_gain);
+	err |= write_reg(self, HLW811X_REG_POWER_GAIN_B, p, sizeof(*p));
+	*p = swap16(cal->phase_a);
+	err |= write_reg(self, HLW811X_REG_PHASE_A, p, 1);
+	*p = swap16(cal->phase_a);
+	err |= write_reg(self, HLW811X_REG_PHASE_B, p, 1);
+	*p = swap16(cal->paos);
+	err |= write_reg(self, HLW811X_REG_ACTIVE_POWER_OFFSET_A, p, sizeof(*p));
+	*p = swap16(cal->pbos);
+	err |= write_reg(self, HLW811X_REG_ACTIVE_POWER_OFFSET_B, p, sizeof(*p));
+	*p = swap16(cal->rms_iaos);
+	err |= write_reg(self, HLW811X_REG_RMS_OFFSET_IA, p, sizeof(*p));
+	*p = swap16(cal->rms_ibos);
+	err |= write_reg(self, HLW811X_REG_RMS_OFFSET_IB, p, sizeof(*p));
+	*p = swap16(cal->ib_gain);
+	err |= write_reg(self, HLW811X_REG_GAIN_IB, p, sizeof(*p));
+	*p = swap16(cal->ps_gain);
+	err |= write_reg(self, HLW811X_REG_APPARENT_POWER_GAIN, p, sizeof(*p));
+	*p = swap16(cal->psos);
+	err |= write_reg(self, HLW811X_REG_VISUAL_POWER_OFFSET, p, sizeof(*p));
+
+	return err;
+}
+
 hlw811x_error_t hlw811x_reset(struct hlw811x *self)
 {
 	HLW811X_INFO("Resetting HLW811X chip");
