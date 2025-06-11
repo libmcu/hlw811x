@@ -997,8 +997,12 @@ hlw811x_error_t hlw811x_get_calibration(struct hlw811x *self,
  * This function calculates the current gain for channel B by determining
  * the ratio of the RMS current values between channel A and channel B.
  *
+ * @note The ib_gain value must be written to the IBGain register to take
+ *       effect.
+ *
  * @param[in] self Pointer to the hlw811x instance.
- * @param[out] ib_gain Pointer to store the calculated current gain for channel B.
+ * @param[out] ib_gain Pointer to store the calculated current gain for
+ *             channel B.
  *
  * @return hlw811x_error_t Error code indicating success or failure.
  */
@@ -1010,21 +1014,25 @@ hlw811x_error_t hlw811x_calc_current_gain_b(struct hlw811x *self,
  *
  * This function is used when PF=1 and Ib=100%.
  *
+ * @note The calculated px_gain value must be written to the PxGain register
+ *       to take effect.
+ *
  * @param[in] self Pointer to the hlw811x instance.
- * @param[in] channel The channel (A or B) for which the gain is calculated.
  * @param[in] error_pct The error percentage to be considered.
  * @param[out] px_gain Pointer to store the calculated active power gain.
  *
  * @return hlw811x_error_t Error code indicating success or failure.
  */
 hlw811x_error_t hlw811x_calc_active_power_gain(struct hlw811x *self,
-		const hlw811x_channel_t channel, const int8_t error_pct,
-		uint16_t *px_gain);
+		const float error_pct, uint16_t *px_gain);
 
 /**
  * @brief Calculate the active power offset for the specified channel.
  *
  * This function is used when PF=1 and Ib=5%.
+ *
+ * @note The calculated px_offset value must be written to the PxOS register
+ *       to take effect.
  *
  * @param[in] self Pointer to the hlw811x instance.
  * @param[in] channel The channel (A or B) for which the offset is calculated.
@@ -1034,13 +1042,16 @@ hlw811x_error_t hlw811x_calc_active_power_gain(struct hlw811x *self,
  * @return hlw811x_error_t Error code indicating success or failure.
  */
 hlw811x_error_t hlw811x_calc_active_power_offset(struct hlw811x *self,
-		const hlw811x_channel_t channel, const int8_t error_pct,
+		const hlw811x_channel_t channel, const float error_pct,
 		uint16_t *px_offset);
 
 /**
  * @brief Calculate the RMS offset for the specified channel.
  *
  * This function is used when PF=1 and Ib=0%.
+ *
+ * @note The calculated rms_offset value must be written to the RmsIxOS
+ *       register to take effect.
  *
  * @param[in] self Pointer to the hlw811x instance.
  * @param[in] channel The channel (A or B) for which the RMS offset is calculated.
@@ -1056,6 +1067,9 @@ hlw811x_error_t hlw811x_calc_rms_offset(struct hlw811x *self,
  *
  * This function is used when PF=1 and Ib=100%.
  *
+ * @note The calculated ps_gain value must be written to the PSGain register
+ *       to take effect.
+ *
  * @param[in] self Pointer to the hlw811x instance.
  * @param[out] ps_gain Pointer to store the calculated apparent power gain.
  *
@@ -1068,6 +1082,9 @@ hlw811x_error_t hlw811x_calc_apparent_power_gain(struct hlw811x *self,
  * @brief Calculate the apparent power offset.
  *
  * This function is used when PF=1 and Ib=0%.
+ *
+ * @note The calculated ps_offset value must be written to the PSOS register
+ *       to take effect.
  *
  * @param[in] self Pointer to the hlw811x instance.
  * @param[out] ps_offset Pointer to store the calculated apparent power offset.

@@ -301,3 +301,41 @@ TEST(HLW811x, apply_calibration_ShouldApplyCalibration) {
 	expect_write("\xA5\x92\x77\x77\xDA", 5);
 	LONGS_EQUAL(HLW811X_ERROR_NONE, hlw811x_apply_calibration(hlw811x, &expected));
 }
+
+TEST(HLW811x, calc_active_power_gain_ShouldReturnCalculatedGain) {
+	uint16_t gain;
+	float err = 1.0918f; // Example error percentage
+	LONGS_EQUAL(HLW811X_ERROR_NONE, hlw811x_calc_active_power_gain(hlw811x, err, &gain));
+	LONGS_EQUAL(0xFE9F, gain);
+}
+
+TEST(HLW811x, calc_active_power_offset_ShouldReturnCalculatedOffset) {
+	uint16_t offset;
+	float error_pct = -0.2553f; // Example error percentage
+	expect_read("\xA5\x2C", "\x00\x0F\x5A\xB7\x0E", 5);
+	LONGS_EQUAL(HLW811X_ERROR_NONE, hlw811x_calc_active_power_offset(hlw811x, HLW811X_CHANNEL_A, error_pct, &offset));
+	LONGS_EQUAL(0xa08, offset);
+}
+
+TEST(HLW811x, calc_rms_offset_ShouldReturnCalculatedOffset) {
+	uint16_t offset;
+	expect_read("\xA5\x24", "\x00\x01\xc3\x72", 4);
+	LONGS_EQUAL(HLW811X_ERROR_NONE, hlw811x_calc_rms_offset(hlw811x, HLW811X_CHANNEL_A, &offset));
+	LONGS_EQUAL(0xFE3D, offset);
+}
+
+TEST(HLW811x, calc_apparent_power_gain_ShouldReturnCalculatedGain) {
+	uint16_t gain;
+	expect_read("\xA5\x2C", "\x0A\x1F\x36\x94\x3B", 5);
+	expect_read("\xA5\x2E", "\x0A\x1F\x45\x26\x98", 5);
+	LONGS_EQUAL(HLW811X_ERROR_NONE, hlw811x_calc_apparent_power_gain(hlw811x, &gain));
+	LONGS_EQUAL(0xD7, gain);
+}
+
+TEST(HLW811x, calc_apparent_power_offset_ShouldReturnCalculatedOffset) {
+	uint16_t offset;
+	expect_read("\xA5\x2C", "\x00\x08\xC2\xD4\x90", 5);
+	expect_read("\xA5\x2E", "\x00\x08\xC1\xD7\x8C", 5);
+	LONGS_EQUAL(HLW811X_ERROR_NONE, hlw811x_calc_apparent_power_offset(hlw811x, &offset));
+	LONGS_EQUAL(0xFD, offset);
+}
