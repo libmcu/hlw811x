@@ -195,21 +195,6 @@ void hlw811x_destroy(struct hlw811x *hlw811x);
 hlw811x_error_t hlw811x_reset(struct hlw811x *self);
 
 /**
- * @brief Apply calibration parameters to the HLW811X device.
- *
- * This function configures the HLW811X device with the provided calibration
- * parameters to ensure accurate measurements.
- *
- * @param[in] self Pointer to the HLW811X device instance.
- * @param[in] cal Pointer to the calibration parameters to be applied.
- *
- * @return hlw811x_error_t Error code indicating the success or failure of the
- *         operation.
- */
-hlw811x_error_t hlw811x_apply_calibration(struct hlw811x *self,
-		const struct hlw811x_calibration *cal);
-
-/**
  * @brief Write data to a specified HLW811X register.
  *
  * This function writes the specified data to the HLW811X register at the given
@@ -976,6 +961,122 @@ hlw811x_error_t hlw811x_get_power_factor(struct hlw811x *self, int32_t *centi);
  */
 hlw811x_error_t hlw811x_get_phase_angle(struct hlw811x *self,
 		int32_t *centidegree, hlw811x_line_freq_t freq);
+
+/**
+ * @brief Apply calibration parameters to the HLW811X device.
+ *
+ * This function configures the HLW811X device with the provided calibration
+ * parameters to ensure accurate measurements.
+ *
+ * @param[in] self Pointer to the HLW811X device instance.
+ * @param[in] cal Pointer to the calibration parameters to be applied.
+ *
+ * @return hlw811x_error_t Error code indicating the success or failure of the
+ *         operation.
+ */
+hlw811x_error_t hlw811x_apply_calibration(struct hlw811x *self,
+		const struct hlw811x_calibration *cal);
+
+/**
+ * @brief Retrieve the calibration data for the HLW811X instance.
+ *
+ * This function retrieves the calibration data, including various gain
+ * and offset values, for the specified HLW811X instance.
+ *
+ * @param[in] self Pointer to the hlw811x instance.
+ * @param[out] cal Pointer to a structure where the calibration data will be stored.
+ *
+ * @return hlw811x_error_t Error code indicating success or failure.
+ */
+hlw811x_error_t hlw811x_get_calibration(struct hlw811x *self,
+		struct hlw811x_calibration *cal);
+
+/**
+ * @brief Calculate the current gain for channel B.
+ *
+ * This function calculates the current gain for channel B by determining
+ * the ratio of the RMS current values between channel A and channel B.
+ *
+ * @param[in] self Pointer to the hlw811x instance.
+ * @param[out] ib_gain Pointer to store the calculated current gain for channel B.
+ *
+ * @return hlw811x_error_t Error code indicating success or failure.
+ */
+hlw811x_error_t hlw811x_calc_current_gain_b(struct hlw811x *self,
+		uint16_t *ib_gain);
+
+/**
+ * @brief Calculate the active power gain for the specified channel.
+ *
+ * This function is used when PF=1 and Ib=100%.
+ *
+ * @param[in] self Pointer to the hlw811x instance.
+ * @param[in] channel The channel (A or B) for which the gain is calculated.
+ * @param[in] error_pct The error percentage to be considered.
+ * @param[out] px_gain Pointer to store the calculated active power gain.
+ *
+ * @return hlw811x_error_t Error code indicating success or failure.
+ */
+hlw811x_error_t hlw811x_calc_active_power_gain(struct hlw811x *self,
+		const hlw811x_channel_t channel, const int8_t error_pct,
+		uint16_t *px_gain);
+
+/**
+ * @brief Calculate the active power offset for the specified channel.
+ *
+ * This function is used when PF=1 and Ib=5%.
+ *
+ * @param[in] self Pointer to the hlw811x instance.
+ * @param[in] channel The channel (A or B) for which the offset is calculated.
+ * @param[in] error_pct The error percentage to be considered.
+ * @param[out] px_offset Pointer to store the calculated active power offset.
+ *
+ * @return hlw811x_error_t Error code indicating success or failure.
+ */
+hlw811x_error_t hlw811x_calc_active_power_offset(struct hlw811x *self,
+		const hlw811x_channel_t channel, const int8_t error_pct,
+		uint16_t *px_offset);
+
+/**
+ * @brief Calculate the RMS offset for the specified channel.
+ *
+ * This function is used when PF=1 and Ib=0%.
+ *
+ * @param[in] self Pointer to the hlw811x instance.
+ * @param[in] channel The channel (A or B) for which the RMS offset is calculated.
+ * @param[out] rms_offset Pointer to store the calculated RMS offset.
+ *
+ * @return hlw811x_error_t Error code indicating success or failure.
+ */
+hlw811x_error_t hlw811x_calc_rms_offset(struct hlw811x *self,
+		const hlw811x_channel_t channel, uint16_t *rms_offset);
+
+/**
+ * @brief Calculate the apparent power gain.
+ *
+ * This function is used when PF=1 and Ib=100%.
+ *
+ * @param[in] self Pointer to the hlw811x instance.
+ * @param[out] ps_gain Pointer to store the calculated apparent power gain.
+ *
+ * @return hlw811x_error_t Error code indicating success or failure.
+ */
+hlw811x_error_t hlw811x_calc_apparent_power_gain(struct hlw811x *self,
+		uint16_t *ps_gain);
+
+/**
+ * @brief Calculate the apparent power offset.
+ *
+ * This function is used when PF=1 and Ib=0%.
+ *
+ * @param[in] self Pointer to the hlw811x instance.
+ * @param[out] ps_offset Pointer to store the calculated apparent power offset.
+ *
+ * @return hlw811x_error_t Error code indicating success or failure.
+ */
+hlw811x_error_t hlw811x_calc_apparent_power_offset(struct hlw811x *self,
+		uint16_t *ps_offset);
+
 
 #if defined(__cplusplus)
 }

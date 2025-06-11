@@ -270,3 +270,34 @@ TEST(HLW811x, energy_ShouldReturn1Wh_When1WhIsGiven) {
 	LONGS_EQUAL(HLW811X_ERROR_NONE, hlw811x_get_energy(hlw811x, HLW811X_CHANNEL_A, &Wh));
 	LONGS_EQUAL(4194308, Wh); /* It should be 16777215. 0.0001192% error. */
 }
+
+TEST(HLW811x, apply_calibration_ShouldApplyCalibration) {
+	const struct hlw811x_calibration expected = {
+		.hfconst = 0x1234,
+		.pa_gain = 0x5678,
+		.pb_gain = 0x9ABC,
+		.phase_a = 0xDE,
+		.phase_b = 0xF0,
+		.paos = 0x1111,
+		.pbos = 0x2222,
+		.rms_iaos = 0x3333,
+		.rms_ibos = 0x4444,
+		.ib_gain = 0x5555,
+		.ps_gain = 0x6666,
+		.psos = 0x7777,
+	};
+
+	expect_write("\xA5\x82\x12\x34\x92", 5);
+	expect_write("\xA5\x85\x56\x78\x07", 5);
+	expect_write("\xA5\x86\x9A\xBC\x7E", 5);
+	expect_write("\xA5\x87\xDE\xF5", 4);
+	expect_write("\xA5\x88\xF0\xE2", 4);
+	expect_write("\xA5\x8A\x11\x11\xAE", 5);
+	expect_write("\xA5\x8B\x22\x22\x8B", 5);
+	expect_write("\xA5\x8E\x33\x33\x66", 5);
+	expect_write("\xA5\x8F\x44\x44\x43", 5);
+	expect_write("\xA5\x90\x55\x55\x20", 5);
+	expect_write("\xA5\x91\x66\x66\xFD", 5);
+	expect_write("\xA5\x92\x77\x77\xDA", 5);
+	LONGS_EQUAL(HLW811X_ERROR_NONE, hlw811x_apply_calibration(hlw811x, &expected));
+}

@@ -1512,6 +1512,40 @@ hlw811x_error_t hlw811x_disable_channel(struct hlw811x *self,
 	return err;
 }
 
+hlw811x_error_t hlw811x_get_calibration(struct hlw811x *self,
+		struct hlw811x_calibration *cal)
+{
+	uint8_t buf[2];
+	hlw811x_error_t err;
+
+	err = read_reg(self, HLW811X_REG_PULSE_FREQ, buf, sizeof(buf));
+	cal->hfconst = (uint16_t)((buf[0] << 8) | buf[1]);
+	err |= read_reg(self, HLW811X_REG_POWER_GAIN_A, buf, sizeof(buf));
+	cal->pa_gain = (uint16_t)((buf[0] << 8) | buf[1]);
+	err |= read_reg(self, HLW811X_REG_POWER_GAIN_B, buf, sizeof(buf));
+	cal->pb_gain = (uint16_t)((buf[0] << 8) | buf[1]);
+	err |= read_reg(self, HLW811X_REG_PHASE_A, buf, 1);
+	cal->phase_a = buf[0];
+	err |= read_reg(self, HLW811X_REG_PHASE_B, buf, 1);
+	cal->phase_b = buf[0];
+	err |= read_reg(self, HLW811X_REG_ACTIVE_POWER_OFFSET_A, buf, sizeof(buf));
+	cal->paos = (uint16_t)((buf[0] << 8) | buf[1]);
+	err |= read_reg(self, HLW811X_REG_ACTIVE_POWER_OFFSET_B, buf, sizeof(buf));
+	cal->pbos = (uint16_t)((buf[0] << 8) | buf[1]);
+	err |= read_reg(self, HLW811X_REG_RMS_OFFSET_IA, buf, sizeof(buf));
+	cal->rms_iaos = (uint16_t)((buf[0] << 8) | buf[1]);
+	err |= read_reg(self, HLW811X_REG_RMS_OFFSET_IB, buf, sizeof(buf));
+	cal->rms_ibos = (uint16_t)((buf[0] << 8) | buf[1]);
+	err |= read_reg(self, HLW811X_REG_GAIN_IB, buf, sizeof(buf));
+	cal->ib_gain = (uint16_t)((buf[0] << 8) | buf[1]);
+	err |= read_reg(self, HLW811X_REG_APPARENT_POWER_GAIN, buf, sizeof(buf));
+	cal->ps_gain = (uint16_t)((buf[0] << 8) | buf[1]);
+	err |= read_reg(self, HLW811X_REG_VISUAL_POWER_OFFSET, buf, sizeof(buf));
+	cal->psos = (uint16_t)((buf[0] << 8) | buf[1]);
+
+	return err;
+}
+
 hlw811x_error_t hlw811x_apply_calibration(struct hlw811x *self,
 		const struct hlw811x_calibration *cal)
 {
